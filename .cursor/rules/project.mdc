@@ -1,0 +1,304 @@
+---
+alwaysApply: true
+---
+You are an expert in TypeScript,TanStack Query v5 (React Query), Zustand, and Mobile UI development.
+**ALWAYS use Bun commands, NEVER use npm/yarn/pnpm:**
+```bash
+# ✅ CORRECT
+bun install              # NOT npm install
+bun add express          # NOT npm install express
+bun add -d @types/node   # NOT npm install -D
+bun remove package       # NOT npm uninstall
+# ❌ NEVER USE
+npm install
+yarn add
+pnpm install
+```
+Code Style and Structure
+- Write concise, technical TypeScript code with accurate examples.
+- Use functional and declarative programming patterns; avoid classes.
+- Prefer iteration and modularization over code duplication.
+- Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
+- Structure files: exported component, subcomponents, helpers, static content, types.
+- Follow feature-based folder structure for scalability and maintainability.
+Naming Conventions
+- Use lowercase with dashes for directories (e.g., features/user-profile, components/auth-wizard).
+- Favor named exports for components.
+- Prefix custom hooks with "use" (e.g., useAuth, useUserQuery).
+TypeScript Usage
+- Use TypeScript for all code; prefer interfaces over types.
+- Avoid enums; use maps or const objects instead.
+- Use functional components with TypeScript interfaces.
+- Use strict mode in TypeScript for better type safety.
+- Always type TanStack Query v5 hooks properly with single generic: useQuery<DataType>.
+- Error type defaults to Error in v5 (not unknown); specify different error types if needed: useQuery<DataType, CustomError>.
+Syntax and Formatting
+- Use the "function" keyword for pure functions.
+- Avoid unnecessary curly braces in conditionals; use concise syntax for simple statements.
+- Use declarative JSX.
+- Use Prettier for consistent code formatting.
+UI and Styling
+- Use Expo's built-in components for common UI patterns and layouts.
+- Implement responsive design with Flexbox and Expo's useWindowDimensions for screen size adjustments.
+- Use styled-components or Tailwind CSS for component styling.
+- Implement dark mode support using Expo's useColorScheme.
+- Ensure high accessibility (a11y) standards using ARIA roles and native accessibility props.
+- Leverage react-native-reanimated and react-native-gesture-handler for performant animations and gestures.
+Safe Area Management
+- Use SafeAreaProvider from react-native-safe-area-context to manage safe areas globally in your app.
+- Wrap top-level components with SafeAreaView to handle notches, status bars, and other screen insets on both iOS and Android.
+- Use SafeAreaScrollView for scrollable content to ensure it respects safe area boundaries.
+- Avoid hardcoding padding or margins for safe areas; rely on SafeAreaView and context hooks.
+Performance Optimization
+- Minimize the use of useState and useEffect; prefer Zustand for state management and TanStack Query for server state.
+- Use Expo's AppLoading and SplashScreen for optimized app startup experience.
+- Optimize images: use WebP format where supported, include size data, implement lazy loading with expo-image.
+- Implement code splitting and lazy loading for non-critical components with React's Suspense and dynamic imports.
+- Profile and monitor performance using React Native's built-in tools and Expo's debugging features.
+- Avoid unnecessary re-renders by memoizing components and using useMemo and useCallback hooks appropriately.
+- Use Zustand selectors to prevent unnecessary re-renders: useStore((state) => state.value).
+- Optimize FlatList with removeClippedSubviews, windowSize, maxToRenderPerBatch, and getItemLayout.
+Navigation
+- Use react-navigation or expo-router for routing and navigation; follow best practices for stack, tab, and drawer navigators.
+- Leverage deep linking and universal links for better user engagement and navigation flow.
+- Implement screen focus refetching with TanStack Query using useFocusEffect hook.
+State Management
+- Use TanStack Query v5 for server state management (API data fetching, caching, synchronization).
+- Use Zustand for client state management (UI state, auth tokens, user preferences).
+- Never store server state in Zustand; never store UI state in TanStack Query.
+- Use React Context sparingly; prefer Zustand for global client state.
+- Persist auth and user data with Zustand's persist middleware and AsyncStorage.
+TanStack Query v5 Best Practices
+- Create custom hooks for all queries and mutations.
+- Organize query keys hierarchically: ['resource', 'action', ...params].
+- Use proper query key structure for easy invalidation and refetching.
+- Setup QueryClient with appropriate staleTime, gcTime (formerly cacheTime in v4), and retry settings.
+- Implement focusManager with AppState for proper refetching on app focus.
+- Setup onlineManager with NetInfo for network-aware queries.
+- Use enabled option for conditional queries.
+- Invalidate related queries in mutation onSuccess callbacks.
+- Implement optimistic updates using mutation variables for better UX.
+- Use single object parameter syntax (v5 removed overloads).
+- Handle side effects in useEffect, not in query callbacks (onSuccess/onError/onSettled removed from queries in v5).
+- Use isPending for loading states (replaces v4's isLoading).
+- Use isLoading for initial fetch in progress: isPending && isFetching.
+- Use throwOnError instead of useErrorBoundary (renamed in v5).
+- For infinite queries, always specify initialPageParam (required in v5).
+- Use placeholderData with keepPreviousData function (replaces keepPreviousData option).
+- Prefer useSuspenseQuery for suspense data fetching (stable in v5).
+TanStack Query v5 Breaking Changes
+- **Single Object Parameter**: All hooks now accept only a single options object.
+  ```typescript
+  // ❌ v4 style (multiple parameters)
+  useQuery(['todos'], fetchTodos, { staleTime: 5000 });
+  // ✅ v5 style (single object)
+  useQuery({
+    queryKey: ['todos'],
+    queryFn: fetchTodos,
+    staleTime: 5000,
+  });
+  ```
+- **Loading States Renamed**:
+  - `isLoading` → `isPending` (indicates no cached data yet)
+  - `isInitialLoading` → `isLoading` (now means: isPending && isFetching)
+  - Use `isPending` to check if data is available
+  - Use `isLoading` only when you need to know if initial fetch is in progress
+- **gcTime replaces cacheTime**:
+  ```typescript
+  // ❌ v4
+  useQuery({ queryKey: ['todos'], queryFn: fetchTodos, cacheTime: 10 * 60 * 1000 });
+  // ✅ v5
+  useQuery({ queryKey: ['todos'], queryFn: fetchTodos, gcTime: 10 * 60 * 1000 });
+  ```
+- **Query Callbacks Removed**: onSuccess, onError, and onSettled removed from useQuery (still available in mutations).
+  ```typescript
+  // ❌ v4
+  useQuery({
+    queryKey: ['user'],
+    queryFn: fetchUser,
+    onSuccess: (data) => console.log(data),
+  });
+  // ✅ v5 - Use useEffect instead
+  const query = useQuery({ queryKey: ['user'], queryFn: fetchUser });
+  useEffect(() => {
+    if (query.isSuccess) console.log(query.data);
+  }, [query.isSuccess, query.data]);
+  ```
+- **Infinite Queries**: initialPageParam is now required.
+  ```typescript
+  // ❌ v4
+  useInfiniteQuery({
+    queryKey: ['items'],
+    queryFn: ({ pageParam = 0 }) => fetchItems(pageParam),
+  });
+  // ✅ v5
+  useInfiniteQuery({
+    queryKey: ['items'],
+    queryFn: ({ pageParam }) => fetchItems(pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  });
+  ```
+- **keepPreviousData Removed**: Use placeholderData instead.
+  ```typescript
+  // ❌ v4
+  useQuery({ queryKey: ['todos', page], queryFn: fetchTodos, keepPreviousData: true });
+  // ✅ v5
+  import { keepPreviousData } from '@tanstack/react-query';
+  useQuery({
+    queryKey: ['todos', page],
+    queryFn: fetchTodos,
+    placeholderData: keepPreviousData,
+  });
+  ```
+- **Error Type Default**: Error is now the default error type (was unknown in v4).
+  ```typescript
+  // TypeScript will infer Error as error type
+  const { error } = useQuery({ queryKey: ['user'], queryFn: fetchUser });
+  // error is typed as Error, not unknown
+  // Specify custom error type if needed
+  const { error } = useQuery<User, CustomError>({
+    queryKey: ['user'],
+    queryFn: fetchUser,
+  });
+  ```
+- **useErrorBoundary Renamed**: Now called throwOnError.
+  ```typescript
+  // ❌ v4
+  useQuery({ queryKey: ['user'], queryFn: fetchUser, useErrorBoundary: true });
+  // ✅ v5
+  useQuery({ queryKey: ['user'], queryFn: fetchUser, throwOnError: true });
+  ```
+- **Suspense Support**: Use dedicated hooks for suspense.
+  ```typescript
+  // ❌ v4
+  useQuery({ queryKey: ['user'], queryFn: fetchUser, suspense: true });
+  // ✅ v5
+  import { useSuspenseQuery } from '@tanstack/react-query';
+  useSuspenseQuery({ queryKey: ['user'], queryFn: fetchUser });
+  // data is never undefined with useSuspenseQuery
+  ```
+- **React 18+ Required**: TanStack Query v5 requires React 18.0 or later.
+- **Optimistic Updates Simplified**: Access mutation variables directly.
+  ```typescript
+  const mutation = useMutation({
+    mutationFn: addTodo,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['todos'] })
+  })
+  // Access optimistic data via mutation.variables
+  {mutation.isPending && (
+    <li style={{ opacity: 0.5 }}>
+      {mutation.variables}
+    </li>
+  )}
+  ```
+Zustand Best Practices
+- Separate state into logical slices for better organization.
+- Use selectors to prevent unnecessary re-renders.
+- Use shallow equality for selecting multiple values.
+- Persist sensitive data with AsyncStorage using persist middleware.
+- Use immer middleware for complex nested state updates.
+- Keep actions co-located with state in the store.
+- Create typed stores with proper TypeScript interfaces.
+Feature-Based Folder Structure
+```
+/
+├── features/
+│   ├── auth/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── screens/
+│   │   ├── services/
+│   │   ├── store/
+│   │   ├── types/
+│   │   └── index.ts
+│   └── [feature]/
+├── shared/
+│   ├── components/
+│   ├── hooks/
+│   ├── utils/
+│   ├── constants/
+│   └── types/
+├── navigation/
+├── services/
+│   ├── api/
+│   └── storage/
+├── store/
+└── App.tsx
+```
+- Each feature is self-contained with its components, hooks, screens, services, store, and types.
+- No imports between features; use shared/ for common code.
+- Export public API through index.ts in each feature.
+Error Handling and Validation
+- Use Zod for runtime validation and error handling.
+- Handle TanStack Query errors with isError and error states.
+- Implement proper error logging using Sentry or a similar service.
+- Prioritize error handling and edge cases:
+  - Handle errors at the beginning of functions.
+  - Use early returns for error conditions to avoid deeply nested if statements.
+  - Avoid unnecessary else statements; use if-return pattern instead.
+  - Implement global error boundaries to catch and handle unexpected errors.
+- Use expo-error-reporter for logging and reporting errors in production.
+- Add global error handling to QueryClient defaultOptions.
+Testing
+- Write unit tests using Jest and React Native Testing Library.
+- Test Zustand stores in isolation with renderHook.
+- Mock TanStack Query with QueryClientProvider wrapper in tests.
+- Implement integration tests for critical user flows using Detox.
+- Use Expo's testing tools for running tests in different environments.
+- Consider snapshot testing for components to ensure UI consistency.
+Security
+- Sanitize user inputs to prevent XSS attacks.
+- Use react-native-encrypted-storage or expo-secure-store for secure storage of sensitive data.
+- Store auth tokens in Zustand with persist middleware using AsyncStorage.
+- Ensure secure communication with APIs using HTTPS and proper authentication.
+- Use Expo's Security guidelines to protect your app: https://docs.expo.dev/guides/security/
+Internationalization (i18n)
+- Use react-native-i18n or expo-localization for internationalization and localization.
+- Support multiple languages and RTL layouts.
+- Ensure text scaling and font adjustments for accessibility.
+Key Conventions
+1. Rely on Expo's managed workflow for streamlined development and deployment.
+2. Prioritize Mobile Web Vitals (Load Time, Jank, and Responsiveness).
+3. Use expo-constants for managing environment variables and configuration.
+4. Use expo-permissions to handle device permissions gracefully.
+5. Implement expo-updates for over-the-air (OTA) updates.
+6. Follow Expo's best practices for app deployment and publishing: https://docs.expo.dev/distribution/introduction/
+7. Ensure compatibility with iOS and Android by testing extensively on both platforms.
+8. Separate server state (TanStack Query) from client state (Zustand) for optimal performance.
+9. Use feature-based organization consistently across the project.
+10. Implement proper loading and error states for all data fetching operations.
+Component Structure
+- Group hooks logically: Zustand selectors, TanStack Query hooks, other hooks, callbacks, effects.
+- Handle loading and error states before rendering main content.
+- Memoize expensive computations and callbacks passed to children.
+API and Query Setup
+- Configure QueryClient with appropriate defaults for mobile (staleTime, gcTime, retry, refetchOnWindowFocus: false).
+- Use query key factories for consistent and scalable key management.
+- Implement proper TypeScript typing for all queries and mutations.
+Performance Rules
+- Use React.memo() for expensive pure components.
+- Implement list virtualization with FlatList for long lists.
+- Avoid inline function creation in render; use useCallback.
+- Use Zustand selectors to subscribe only to needed state slices.
+- Implement proper image optimization with expo-image.
+- Monitor bundle size and use code splitting where appropriate.
+Anti-Patterns to Avoid
+- Don't use class components; use functional components only.
+- Don't use any type; use unknown if type is uncertain.
+- Don't import between features; use shared/ for common code.
+- Don't store server data in Zustand; use TanStack Query.
+- Don't store UI state in TanStack Query; use Zustand.
+- Don't create inline functions in JSX; memoize with useCallback.
+- Don't forget to handle loading and error states.
+- Don't mutate state directly; use Zustand's set or immer middleware.
+- Don't skip query key organization; use consistent patterns.
+- Don't use enums; use const objects or string unions.
+- Don't use v4 syntax; always use v5 single-object parameter style.
+- Don't use query callbacks (onSuccess/onError); use useEffect instead.
+- Don't forget initialPageParam in infinite queries (required in v5).
+API Documentation
+- TanStack Query v5: https://tanstack.com/query/v5/docs/framework/react/overview
+- TanStack Query v5 Migration Guide: https://tanstack.com/query/v5/docs/framework/react/guides/migrating-to-v5
+- Zustand: https://docs.pmnd.rs/zustand/getting-started/introduction
+Refer to documentation for detailed information on setup, configuration, and best practices.
