@@ -2,9 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Eye, EyeClosed, Copy, RefreshCircle, Document } from "@solar-icons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete01Icon } from "@hugeicons/core-free-icons";
@@ -16,12 +14,14 @@ interface ApiKeyProps {
 
 export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
   const [isVisible, setIsVisible] = useState<{ [key: string]: boolean }>({});
   const [copied, setCopied] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [totalKeys, setTotalKeys] = useState(0);
+  const [maxAllowed, setMaxAllowed] = useState(5);
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
 
   // Fetch API keys on component mount
   useEffect(() => {
@@ -33,12 +33,22 @@ export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
     setError(null);
     try {
       const response = await listApiKeysEndpoint();
-      if (response.data && response.data.length > 0) {
-        setApiKeys(response.data);
-        setSelectedKey(response.data[0]);
+      if (response.data && response.data.keys && response.data.keys.length > 0) {
+        // Convert ApiKeyListItem[] to ApiKey[] (without full key, only masked)
+        const keys: ApiKey[] = response.data.keys.map(item => ({
+          id: item.id,
+          label: item.label,
+          masked_suffix: item.masked_suffix,
+        }));
+        setApiKeys(keys);
+        setTotalKeys(response.data.total);
+        setMaxAllowed(response.data.max_allowed);
       } else {
         setApiKeys([]);
-        setSelectedKey(null);
+        setTotalKeys(0);
+        if (response.data) {
+          setMaxAllowed(response.data.max_allowed || 5);
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to fetch API keys";
@@ -58,13 +68,22 @@ export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
   const handleGenerateNew = async () => {
     setIsCreating(true);
     setError(null);
+    setNewlyCreatedKey(null);
     try {
       const response = await createApiKeyEndpoint();
-      if (response.data) {
-        // Add the new key to the list
-        setApiKeys((prev) => [response.data, ...prev]);
-        setSelectedKey(response.data);
-        setIsVisible((prev) => ({ ...prev, [response.data.id]: true }));
+      if (response.data && response.data.api_key) {
+        const fullKey = response.data.api_key;
+        
+        // Store the newly created key to show it prominently
+        setNewlyCreatedKey(fullKey);
+        setTotalKeys(response.data.total_keys);
+        setMaxAllowed(response.data.max_allowed);
+        
+        // Refetch the list to get the updated keys from the server
+        await fetchApiKeys();
+        
+        // Note: The newly created key will remain visible until user dismisses it
+        // This ensures users have time to copy the key securely
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to create API key";
@@ -75,7 +94,7 @@ export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
     }
   };
 
-  const handleDelete = async (keyId: string) => {
+  const handleDelete = async (keyId: number | string) => {
     if (!confirm("Are you sure you want to revoke this API key? This action cannot be undone.")) {
       return;
     }
@@ -86,11 +105,8 @@ export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
       await deleteApiKeyEndpoint(keyId);
       // Remove the deleted key from the list
       setApiKeys((prev) => prev.filter((key) => key.id !== keyId));
-      // If the deleted key was selected, select the first remaining key or null
-      if (selectedKey?.id === keyId) {
-        const remainingKeys = apiKeys.filter((key) => key.id !== keyId);
-        setSelectedKey(remainingKeys.length > 0 ? remainingKeys[0] : null);
-      }
+      // Refetch to update the total count
+      fetchApiKeys();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to delete API key";
       setError(errorMessage);
@@ -100,120 +116,159 @@ export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
     }
   };
 
-  const toggleVisibility = (keyId: string) => {
+  const toggleVisibility = (keyId: number | string) => {
     setIsVisible((prev) => ({
       ...prev,
-      [keyId]: !prev[keyId],
+      [String(keyId)]: !prev[String(keyId)],
     }));
+  };
+
+  // Helper function to get display value for a key
+  const getKeyDisplayValue = (key: ApiKey): string => {
+    if (key.key) {
+      // Full key is available (just created)
+      return key.key;
+    }
+    // Only masked suffix available, show masked format with dots prefix
+    return `........${key.masked_suffix}`;
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleSidebar}
-          className="h-9 w-9 rounded-md hover:bg-muted -ml-1"
-        >
-          <div className="flex items-center gap-1">
-            <Document size={18} className="text-foreground" />
-            <div className="w-px h-4 bg-border/60" />
-          </div>
-        </Button>
+      <div className="dashboard-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-[#e5e5e5] dark:border-[#1f1f1f]">
         <div>
-          <h1 className="text-3xl font-bold">API Keys</h1>
-          <p className="text-muted-foreground mt-2">
-            Manage your API keys for accessing the API endpoints.
+          <h1 className="text-3xl font-bold text-black dark:text-white mb-1">API Keys</h1>
+          <p className="text-sm text-[#666666] dark:text-[#999999]">
+            Manage your API keys for accessing the API endpoints
           </p>
         </div>
+        <Button 
+          variant="default" 
+          onClick={handleGenerateNew}
+          disabled={isCreating || isLoading || totalKeys >= maxAllowed}
+          className="bg-[#00c950] hover:bg-[#00b045] text-white font-medium shadow-sm"
+        >
+          <RefreshCircle size={18} className="mr-2" />
+          {isCreating ? "Creating..." : totalKeys >= maxAllowed ? `Limit Reached (${maxAllowed})` : "Generate New Key"}
+        </Button>
       </div>
 
       {error && (
-        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="animate-fade-in-up rounded-lg bg-[#ef4444]/10 dark:bg-[#ef4444]/20 border border-[#ef4444]/20 p-4 text-sm text-[#ef4444] font-medium">
           {error}
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Your API Keys</CardTitle>
-              <CardDescription>
-                Keep your API keys secure and never share them publicly
-              </CardDescription>
-            </div>
-            <Button 
-              variant="default" 
-              onClick={handleGenerateNew}
-              disabled={isCreating || isLoading}
-            >
-              <RefreshCircle size={18} className="mr-2" />
-              {isCreating ? "Creating..." : "Generate New Key"}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isLoading && apiKeys.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Loading API keys...
-            </div>
-          ) : apiKeys.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <p className="mb-4">No API keys found.</p>
-              <Button onClick={handleGenerateNew} disabled={isCreating}>
-                <RefreshCircle size={18} className="mr-2" />
-                Create Your First API Key
+      {newlyCreatedKey && (
+        <Card size="sm" className="animate-scale-in border-[#00c950] bg-[#00c950]/5 dark:bg-[#00c950]/10 shadow-sm">
+          <CardHeader className="border-b border-[#00c950]/20 pb-3">
+            <CardTitle className="text-[#00c950] dark:text-[#00c950] text-base font-semibold">
+              ✅ API Key Created Successfully!
+            </CardTitle>
+            <CardDescription className="text-[#666666] dark:text-[#999999] mt-1 text-xs">
+              This is the only time you'll see the full API key. Make sure to copy and store it securely.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-4">
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                value={newlyCreatedKey}
+                readOnly
+                className="font-mono text-sm bg-white dark:bg-[#0a0a0a] border-[#e5e5e5] dark:border-[#1f1f1f] text-black dark:text-white"
+              />
+              <Button
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(newlyCreatedKey);
+                  setCopied(newlyCreatedKey);
+                  setTimeout(() => setCopied(null), 2000);
+                }}
+                className="border-[#00c950] text-[#00c950] hover:bg-[#00c950]/10 dark:hover:bg-[#00c950]/20"
+              >
+                <Copy size={18} className="mr-2" />
+                {copied === newlyCreatedKey ? "Copied!" : "Copy"}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setNewlyCreatedKey(null)}
+                className="hover:bg-[#f5f5f5] dark:hover:bg-[#1a1a1a] text-black dark:text-white"
+              >
+                Dismiss
               </Button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {apiKeys.map((key) => {
-                const isKeyVisible = isVisible[key.id];
-                const isKeyCopied = copied === key.key;
-                const isSelected = selectedKey?.id === key.id;
+          </CardContent>
+        </Card>
+      )}
 
-                return (
-                  <Card key={key.id} className={isSelected ? "border-primary" : ""}>
-                    <CardContent className="pt-6 space-y-4">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor={`api-key-${key.id}`}>API Key</Label>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={key.is_active ? "default" : "secondary"} className="mr-2">
-                              {key.is_active ? "Active" : "Inactive"}
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setSelectedKey(key)}
-                              className={isSelected ? "bg-muted" : ""}
-                            >
-                              {isSelected ? "Selected" : "Select"}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDelete(key.id)}
-                              disabled={isLoading}
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <HugeiconsIcon icon={Delete01Icon} size={16} />
-                            </Button>
-                          </div>
+      <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
+        <CardContent className="pt-4">
+          <div className="space-y-4">
+            {isLoading && apiKeys.length === 0 ? (
+              <div className="animate-fade-in text-center py-12 text-[#666666] dark:text-[#999999]">
+                Loading API keys...
+              </div>
+            ) : apiKeys.length === 0 ? (
+              <div className="animate-fade-in-up text-center py-12">
+                <p className="mb-4 text-[#666666] dark:text-[#999999]">No API keys found.</p>
+                <Button 
+                  onClick={handleGenerateNew} 
+                  disabled={isCreating || totalKeys >= maxAllowed}
+                  className="bg-[#00c950] hover:bg-[#00b045] text-white font-medium shadow-sm"
+                >
+                  <RefreshCircle size={18} className="mr-2" />
+                  {totalKeys >= maxAllowed ? `Limit Reached (${maxAllowed})` : "Create Your First API Key"}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {apiKeys.map((key, index) => {
+                  const keyIdStr = String(key.id);
+                  const isKeyVisible = isVisible[keyIdStr];
+                  const displayValue = getKeyDisplayValue(key);
+                  const hasFullKey = !!key.key;
+                  
+                  // Staggered animation delay
+                  const delayClass = index === 0 ? 'animate-delay-100' : 
+                                    index === 1 ? 'animate-delay-200' : 
+                                    index === 2 ? 'animate-delay-300' : 
+                                    index === 3 ? 'animate-delay-400' : 
+                                    index === 4 ? 'animate-delay-500' : 'animate-delay-600';
+
+                  return (
+                    <div key={keyIdStr} className={`animate-fade-in-up ${delayClass} space-y-3 p-4 rounded-lg border border-[#e5e5e5] dark:border-[#1f1f1f] bg-[#fafafa] dark:bg-[#111111]`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Badge variant="default" className="bg-[#00c950] text-white font-medium">
+                            Active
+                          </Badge>
+                          {key.label && (
+                            <span className="text-sm text-[#666666] dark:text-[#999999]">{key.label}</span>
+                          )}
                         </div>
-                        <div className="flex gap-2">
-                          <Input
-                            id={`api-key-${key.id}`}
-                            type={isKeyVisible ? "text" : "password"}
-                            value={key.key}
-                            readOnly
-                            className="font-mono text-sm"
-                          />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(key.id)}
+                          disabled={isLoading}
+                          className="text-[#ef4444] hover:text-[#ef4444] hover:bg-[#ef4444]/10"
+                        >
+                          <HugeiconsIcon icon={Delete01Icon} size={16} />
+                        </Button>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          id={`api-key-${keyIdStr}`}
+                          type={hasFullKey ? (isKeyVisible ? "text" : "password") : "text"}
+                          value={displayValue}
+                          readOnly
+                          className="font-mono text-sm bg-white dark:bg-[#0a0a0a] border-[#e5e5e5] dark:border-[#1f1f1f] text-black dark:text-white"
+                        />
+                        {hasFullKey && (
                           <Button
                             variant="outline"
                             onClick={() => toggleVisibility(key.id)}
+                            className="border-[#e5e5e5] dark:border-[#1f1f1f] hover:bg-[#f5f5f5] dark:hover:bg-[#1a1a1a] text-black dark:text-white"
                           >
                             {isKeyVisible ? (
                               <>
@@ -227,42 +282,27 @@ export function ApiKey({ onToggleSidebar }: ApiKeyProps) {
                               </>
                             )}
                           </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => handleCopy(key.key)}
-                          >
-                            <Copy size={18} className="mr-2" />
-                            {isKeyCopied ? "Copied!" : "Copy"}
-                          </Button>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          Created: {new Date(key.created_at).toLocaleString()}
-                          {key.last_used_at && (
-                            <> • Last used: {new Date(key.last_used_at).toLocaleString()}</>
-                          )}
-                        </div>
+                        )}
+                        <Button
+                          variant="outline"
+                          onClick={() => handleCopy(displayValue)}
+                          className="border-[#e5e5e5] dark:border-[#1f1f1f] hover:bg-[#f5f5f5] dark:hover:bg-[#1a1a1a] text-black dark:text-white"
+                        >
+                          <Copy size={18} className="mr-2" />
+                          {copied === displayValue ? "Copied!" : "Copy"}
+                        </Button>
                       </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-
-          {selectedKey && (
-            <>
-              <Separator />
-              <div className="rounded-md bg-muted p-4">
-                <p className="text-sm font-medium mb-2">Usage Instructions</p>
-                <p className="text-sm text-muted-foreground mb-2">
-                  Include your API key in the Authorization header of your requests:
-                </p>
-                <code className="block mt-2 p-2 bg-background rounded text-xs">
-                  Authorization: Bearer {selectedKey.key.substring(0, 20)}...
-                </code>
+                      {hasFullKey && (
+                        <div className="rounded-lg bg-[#fbbf24]/10 dark:bg-[#fbbf24]/20 border border-[#fbbf24]/20 p-3 text-sm text-[#92400e] dark:text-[#fbbf24]">
+                          ⚠️ This is the only time you'll see the full API key. Make sure to copy and store it securely.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            </>
-          )}
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>

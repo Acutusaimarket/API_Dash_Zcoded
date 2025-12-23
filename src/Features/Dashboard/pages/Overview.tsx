@@ -1,222 +1,434 @@
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Document } from "@solar-icons/react";
+import { getApiKeyStatsEndpoint, listApiKeysEndpoint, type OverviewStatsResponseData, type ApiKeyStatsItem, type ApiKeyListItem } from "@/lib/api/endpoints";
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 
 interface OverviewProps {
   onToggleSidebar?: () => void;
 }
 
 export function Overview({ onToggleSidebar }: OverviewProps) {
-  // Sample data for charts
-  const apiCallsData = [120, 180, 150, 200, 250, 180, 220, 190, 210, 240, 200, 234];
-  const maxValue = Math.max(...apiCallsData);
-  const chartHeight = 200;
-  const chartWidth = 1000;
+  const [overviewData, setOverviewData] = useState<OverviewStatsResponseData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const [apiKeys, setApiKeys] = useState<ApiKeyListItem[]>([]);
+  const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
+  const [isLoadingKeys, setIsLoadingKeys] = useState(true);
+
+  // Fetch API keys on mount
+  useEffect(() => {
+    const fetchApiKeys = async () => {
+      setIsLoadingKeys(true);
+      try {
+        const response = await listApiKeysEndpoint();
+        if (response.data && response.data.keys && response.data.keys.length > 0) {
+          setApiKeys(response.data.keys);
+        }
+      } catch (err) {
+        console.error("Error fetching API keys:", err);
+      } finally {
+        setIsLoadingKeys(false);
+      }
+    };
+    fetchApiKeys();
+  }, []);
+
+  useEffect(() => {
+    fetchStats();
+  }, [dateFrom, dateTo, selectedKeyId]);
+
+  const fetchStats = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await getApiKeyStatsEndpoint({
+        key_id: selectedKeyId, // null means all data, otherwise filter by selected key
+        date_from: dateFrom ? new Date(dateFrom).toISOString() : null,
+        date_to: dateTo ? new Date(dateTo + "T23:59:59").toISOString() : null,
+        consumed_by: null, // null means all consumed_by types
+        granularity: "daily",
+        include_chart_data: true,
+        charts_only: false,
+      });
+
+      if (response.data) {
+        // Handle both old format (single object) and new format (keys array)
+        if ('keys' in response.data) {
+          setOverviewData(response.data as OverviewStatsResponseData);
+        } else {
+          // When a single key is selected, wrap it in keys array for consistency
+          const singleKeyData = response.data as any;
+          setOverviewData({ keys: [singleKeyData] });
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch stats";
+      setError(errorMessage);
+      console.error("Error fetching stats:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Aggregate data from all keys
+  const aggregateStats = () => {
+    if (!overviewData?.keys || overviewData.keys.length === 0) {
+      return {
+        totalCredits: 0,
+        totalRecords: 0,
+        averageCreditsPerRecord: 0,
+        creditsByType: {} as { [key: string]: number },
+        recordsByType: {} as { [key: string]: number },
+        chartData: [] as Array<{ date: string; credits: number; records: number }>,
+      };
+    }
+
+    let totalCredits = 0;
+    let totalRecords = 0;
+    const creditsByType: { [key: string]: number } = {};
+    const recordsByType: { [key: string]: number } = {};
+    const chartDataMap: { [date: string]: { credits: number; records: number } } = {};
+
+    // Aggregate data from all keys
+    overviewData.keys.forEach((key: ApiKeyStatsItem) => {
+      totalCredits += key.total_credits_used;
+      totalRecords += key.total_records;
+
+      // Merge credits_by_consumed_by
+      Object.entries(key.credits_by_consumed_by).forEach(([type, credits]) => {
+        creditsByType[type] = (creditsByType[type] || 0) + credits;
+      });
+
+      // Merge records_by_consumed_by
+      Object.entries(key.records_by_consumed_by).forEach(([type, records]) => {
+        recordsByType[type] = (recordsByType[type] || 0) + records;
+      });
+
+      // Merge chart data by date
+      key.chart_data?.time_series?.forEach((point) => {
+        if (!chartDataMap[point.date]) {
+          chartDataMap[point.date] = { credits: 0, records: 0 };
+        }
+        chartDataMap[point.date].credits += point.credits;
+        chartDataMap[point.date].records += point.records;
+      });
+    });
+
+    // Convert chart data map to array and sort by date
+    const chartData = Object.entries(chartDataMap)
+      .map(([date, data]) => ({ date, ...data }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    const averageCreditsPerRecord = totalRecords > 0 ? totalCredits / totalRecords : 0;
+
+    return {
+      totalCredits,
+      totalRecords,
+      averageCreditsPerRecord,
+      creditsByType,
+      recordsByType,
+      chartData,
+    };
+  };
+
+  const aggregated = aggregateStats();
+
+  // Prepare chart data for Recharts
+  const rechartsData = aggregated.chartData.map((point) => ({
+    date: new Date(point.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    fullDate: point.date,
+    records: point.records,
+    credits: Number(point.credits.toFixed(2)),
+  }));
+
+  // Calculate usage distribution
+  const creditsByType = aggregated.creditsByType;
+  const totalCredits = aggregated.totalCredits;
+  const getPercentage = (value: number) => totalCredits > 0 ? (value / totalCredits) * 100 : 0;
+
+  // Prepare data for usage distribution chart
+  const distributionData = Object.entries(creditsByType).map(([key, value]) => {
+    const label =
+      key === "media_simulation"
+        ? "Media"
+        : key === "concept_simulation"
+        ? "Concept Test"
+        : key === "persona_generation_clustering"
+        ? "Persona"
+        : key === "product_ocr"
+        ? "Product"
+        : key;
+    return {
+      name: label,
+      credits: Number(value.toFixed(2)),
+      percentage: getPercentage(value),
+    };
+  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleSidebar}
-          className="h-9 w-9 rounded-md hover:bg-muted -ml-1"
-        >
-          <div className="flex items-center gap-1">
-            <Document size={18} className="text-foreground" />
-            <div className="w-px h-4 bg-border/60" />
-          </div>
-        </Button>
+      <div className="dashboard-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-[#e5e5e5] dark:border-[#1f1f1f]">
         <div>
-          <h1 className="text-3xl font-bold">Overview</h1>
-          {/* <p className="text-muted-foreground mt-2">
-            Welcome to your dashboard. Here's an overview of your account.
-          </p> */}
+          <h1 className="text-3xl font-bold text-black dark:text-white mb-1">Overview</h1>
+          <p className="text-sm text-[#666666] dark:text-[#999999]">
+            Monitor your API usage and performance metrics
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="date-from" className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">From:</Label>
+            <Input
+              id="date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-[150px] border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] text-black dark:text-white focus:border-[#00c950] focus:ring-[#00c950]/20"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="date-to" className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">To:</Label>
+            <Input
+              id="date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-[150px] border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] text-black dark:text-white focus:border-[#00c950] focus:ring-[#00c950]/20"
+              min={dateFrom || undefined}
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+              }}
+              className="border-[#e5e5e5] dark:border-[#1f1f1f] hover:bg-[#f5f5f5] dark:hover:bg-[#1a1a1a] text-black dark:text-white"
+            >
+              Clear
+            </Button>
+          )}
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">API Key:</label>
+            <Select
+              value={selectedKeyId?.toString() || "all"}
+              onValueChange={(value) => setSelectedKeyId(value === "all" ? null : Number(value))}
+              disabled={isLoadingKeys || apiKeys.length === 0}
+            >
+              <SelectTrigger className="w-[200px] border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] text-black dark:text-white focus:border-[#00c950] focus:ring-[#00c950]/20">
+                <SelectValue placeholder={isLoadingKeys ? "Loading..." : "All API keys"} />
+              </SelectTrigger>
+              <SelectContent className="bg-white dark:bg-[#111111] border-[#e5e5e5] dark:border-[#1f1f1f]">
+                <SelectItem value="all" className="text-black dark:text-white">All API keys</SelectItem>
+                {apiKeys.map((key) => (
+                  <SelectItem key={key.id} value={key.id.toString()} className="text-black dark:text-white">
+                    ........{key.masked_suffix}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Total API Calls</CardTitle>
-            <CardDescription>This month</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">1,234</div>
+      {error && (
+        <Card size="sm" className="animate-fade-in-up border-[#ef4444] bg-[#ef4444]/5 dark:bg-[#ef4444]/10">
+          <CardContent className="pt-4">
+            <div className="text-[#ef4444] text-xs font-medium">{error}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Projects</CardTitle>
-            <CardDescription>Currently running</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">5</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Usage Limit</CardTitle>
-            <CardDescription>Remaining this month</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">76%</div>
-          </CardContent>
-        </Card>
-      </div>
+      )}
+
+      {isLoading ? (
+        <div className="text-center py-12 text-[#666666] dark:text-[#999999] animate-fade-in">Loading stats...</div>
+      ) : (
+        <>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">Total API Requests</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-[#00c950]">{aggregated.totalRecords.toLocaleString()}</div>
+                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">All time API requests</p>
+              </CardContent>
+            </Card>
+            <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">Total Credits Used</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-[#00c950]">{aggregated.totalCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">Credits consumed</p>
+              </CardContent>
+            </Card>
+            <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">Average Credits/API Request</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-[#00c950]">{aggregated.averageCreditsPerRecord.toFixed(2)}</div>
+                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">Per API request average</p>
+              </CardContent>
+            </Card>
+          </div>
       
       {/* Usage Graphs */}
       <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>API Calls Trend</CardTitle>
-            <CardDescription>Last 12 days</CardDescription>
+        <Card size="sm" className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
+          <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
+            <CardTitle className="text-base font-semibold text-black dark:text-white">API Calls Trend</CardTitle>
+            <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">API Requests and credits over time</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="w-full overflow-x-auto">
-              <svg
-                width={chartWidth}
-                height={chartHeight}
-                className="w-full h-auto"
-                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-              >
-                {/* Grid lines */}
-                {[0, 0.25, 0.5, 0.75, 1].map((y) => (
-                  <line
-                    key={y}
-                    x1="40"
-                    y1={y * (chartHeight - 40) + 20}
-                    x2={chartWidth - 20}
-                    y2={y * (chartHeight - 40) + 20}
-                    stroke="currentColor"
-                    strokeWidth="1"
-                    className="text-border opacity-20"
+          <CardContent className="pt-4">
+            {rechartsData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={rechartsData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" dark:stroke="#1f1f1f" />
+                  <XAxis
+                    dataKey="date"
+                    className="text-xs"
+                    tick={{ fill: "#666666" }}
+                    stroke="#e5e5e5"
                   />
-                ))}
-                
-                {/* Line chart */}
-                <polyline
-                  points={apiCallsData
-                    .map((value, index) => {
-                      const x = 40 + (index * (chartWidth - 60)) / (apiCallsData.length - 1);
-                      const y = chartHeight - 20 - (value / maxValue) * (chartHeight - 40);
-                      return `${x},${y}`;
-                    })
-                    .join(" ")}
-                  fill="none"
-                  stroke="hsl(142, 76%, 36%)"
-                  strokeWidth="3"
-                  className="drop-shadow-sm"
-                />
-                
-                {/* Data points */}
-                {apiCallsData.map((value, index) => {
-                  const x = 40 + (index * (chartWidth - 60)) / (apiCallsData.length - 1);
-                  const y = chartHeight - 20 - (value / maxValue) * (chartHeight - 40);
-                  return (
-                    <circle
-                      key={index}
-                      cx={x}
-                      cy={y}
-                      r="4"
-                      fill="hsl(142, 76%, 36%)"
-                      className="drop-shadow-sm"
-                    />
-                  );
-                })}
-                
-                {/* X-axis labels */}
-                {apiCallsData.map((_, index) => {
-                  const x = 40 + (index * (chartWidth - 60)) / (apiCallsData.length - 1);
-                  return (
-                    <text
-                      key={index}
-                      x={x}
-                      y={chartHeight - 5}
-                      textAnchor="middle"
-                      className="text-xs fill-muted-foreground"
-                    >
-                      {index + 1}
-                    </text>
-                  );
-                })}
-              </svg>
-            </div>
+                  <YAxis
+                    className="text-xs"
+                    tick={{ fill: "#666666" }}
+                    stroke="#e5e5e5"
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#ffffff",
+                      border: "1px solid #e5e5e5",
+                      borderRadius: "8px",
+                      color: "#000000",
+                    }}
+                  />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="records"
+                    stroke="#00c950"
+                    strokeWidth={3}
+                    dot={{ fill: "#00c950", r: 5 }}
+                    name="API Requests"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="credits"
+                    stroke="#3b82f6"
+                    strokeWidth={3}
+                    dot={{ fill: "#3b82f6", r: 5 }}
+                    name="Credits"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">No chart data available</div>
+            )}
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Usage Distribution</CardTitle>
-            <CardDescription>By service type</CardDescription>
+        <Card size="sm" className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
+          <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
+            <CardTitle className="text-base font-semibold text-black dark:text-white">Usage Distribution</CardTitle>
+            <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">By service type</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Media</span>
-                  <span className="font-medium">45%</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-green-500 h-2 rounded-full"
-                    style={{ width: "45%" }}
+          <CardContent className="pt-4">
+            {distributionData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={distributionData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
+                  <XAxis
+                    dataKey="name"
+                    className="text-xs"
+                    tick={{ fill: "#666666" }}
+                    stroke="#e5e5e5"
                   />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Concept Test</span>
-                  <span className="font-medium">30%</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-blue-500 h-2 rounded-full"
-                    style={{ width: "30%" }}
+                  <YAxis
+                    className="text-xs"
+                    tick={{ fill: "#666666" }}
+                    stroke="#e5e5e5"
                   />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Price Simulator</span>
-                  <span className="font-medium">25%</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-purple-500 h-2 rounded-full"
-                    style={{ width: "25%" }}
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#ffffff",
+                      border: "1px solid #e5e5e5",
+                      borderRadius: "8px",
+                      color: "#000000",
+                    }}
+                    formatter={(value: number) => [
+                      `${value.toFixed(2)} credits (${distributionData.find((d) => d.credits === value)?.percentage.toFixed(1)}%)`,
+                      "Credits",
+                    ]}
                   />
-                </div>
-              </div>
-            </div>
+                  <Bar dataKey="credits" fill="#00c950" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">No usage data available</div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Daily API Usage</CardTitle>
-          <CardDescription>Requests per day this month</CardDescription>
+      <Card size="sm" className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
+        <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
+          <CardTitle className="text-base font-semibold text-black dark:text-white">Daily API Usage</CardTitle>
+          <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">API Requests per day</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="w-full overflow-x-auto">
-            <div className="flex items-end gap-2 h-64 min-w-[600px]">
-              {apiCallsData.map((value, index) => {
-                const height = (value / maxValue) * 100;
-                return (
-                  <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                    <div
-                      className="w-full bg-gradient-to-t from-green-500 to-green-400 rounded-t transition-all hover:opacity-80"
-                      style={{ height: `${height}%` }}
-                      title={`Day ${index + 1}: ${value} calls`}
-                    />
-                    <span className="text-xs text-muted-foreground">{index + 1}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        <CardContent className="pt-4">
+          {rechartsData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={rechartsData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
+                <XAxis
+                  dataKey="date"
+                  className="text-xs"
+                  tick={{ fill: "#666666" }}
+                  stroke="#e5e5e5"
+                />
+                <YAxis
+                  className="text-xs"
+                  tick={{ fill: "#666666" }}
+                  stroke="#e5e5e5"
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#ffffff",
+                    border: "1px solid #e5e5e5",
+                    borderRadius: "8px",
+                    color: "#000000",
+                  }}
+                />
+                <Bar dataKey="records" fill="#00c950" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">No chart data available</div>
+          )}
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }

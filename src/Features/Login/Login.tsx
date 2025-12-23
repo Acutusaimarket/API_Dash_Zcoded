@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -26,37 +26,33 @@ export function Login({ onLoginSuccess }: LoginProps) {
     setIsLoading(true);
 
     try {
+      // Call the login API endpoint
       const response = await loginEndpoint(email, password);
       
-      // Check if response is successful (status 200 and success true)
-      if (response.status === 200 && response.success === true) {
+      if (response.success && response.data) {
         setSuccess(true);
-        console.log("Login successful:", response);
         
-        // Store tokens and user data in localStorage
-        localStorage.setItem("access_token", response.data.access_token);
-        localStorage.setItem("refresh_token", response.data.refresh_token);
-        localStorage.setItem("token_type", response.data.token_type);
-        localStorage.setItem("expires_in", response.data.expires_in.toString());
-        localStorage.setItem("refresh_expires_in", response.data.refresh_expires_in.toString());
-        localStorage.setItem("userEmail", response.data.user.email);
-        localStorage.setItem("userId", response.data.user.id);
-        localStorage.setItem("userData", JSON.stringify(response.data.user));
+        // Tokens are already stored by loginEndpoint, just store user data
+        const { user } = response.data;
+        
+        localStorage.setItem("userEmail", user.email);
+        localStorage.setItem("userId", user.id);
+        localStorage.setItem("userData", JSON.stringify(user));
         
         // Call onLoginSuccess callback if provided
         if (onLoginSuccess) {
           onLoginSuccess();
         }
         
-        // Redirect to dashboard immediately
+        // Redirect to dashboard
         navigate("/dashboard", { replace: true });
       } else {
-        throw new Error(response.message || "Login failed");
+        setError(response.message || "Login failed. Please check your credentials.");
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Login failed. Please try again.";
+      // Handle API errors
+      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred. Please try again.";
       setError(errorMessage);
-      console.error("Login error:", err);
     } finally {
       setIsLoading(false);
     }
@@ -66,10 +62,10 @@ export function Login({ onLoginSuccess }: LoginProps) {
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Login</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-center">Login</CardTitle>
+          {/* <CardDescription>
             Enter your email and password to access your account
-          </CardDescription>
+          </CardDescription> */}
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -78,7 +74,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
               <Input
                 id="email"
                 type="email"
-                placeholder="name@example.com"
+                placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

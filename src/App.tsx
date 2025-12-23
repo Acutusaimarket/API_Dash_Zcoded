@@ -29,6 +29,7 @@ export function App() {
     localStorage.removeItem("token_type");
     localStorage.removeItem("expires_in");
     localStorage.removeItem("refresh_expires_in");
+    localStorage.removeItem("token_timestamp");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userId");
     localStorage.removeItem("userData");
