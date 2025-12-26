@@ -7,11 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Login as LoginIcon } from "@solar-icons/react";
 import { loginEndpoint } from "@/lib/api/endpoints";
 
-interface LoginProps {
-  onLoginSuccess?: () => void;
-}
-
-export function Login({ onLoginSuccess }: LoginProps) {
+export function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,30 +24,34 @@ export function Login({ onLoginSuccess }: LoginProps) {
     try {
       // Call the login API endpoint
       const response = await loginEndpoint(email, password);
-      
+
       if (response.success && response.data) {
         setSuccess(true);
-        
+
         // Tokens are already stored by loginEndpoint, just store user data
         const { user } = response.data;
-        
+
         localStorage.setItem("userEmail", user.email);
         localStorage.setItem("userId", user.id);
         localStorage.setItem("userData", JSON.stringify(user));
-        
-        // Call onLoginSuccess callback if provided
-        if (onLoginSuccess) {
-          onLoginSuccess();
-        }
-        
+
+        // Store password temporarily in sessionStorage for refreshing user data
+        // This will be cleared when user logs out or closes the browser
+        sessionStorage.setItem("userPassword", password);
+
         // Redirect to dashboard
         navigate("/dashboard", { replace: true });
       } else {
-        setError(response.message || "Login failed. Please check your credentials.");
+        setError(
+          response.message || "Login failed. Please check your credentials."
+        );
       }
     } catch (err) {
       // Handle API errors
-      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred. Please try again.";
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : "An unexpected error occurred. Please try again.";
       setError(errorMessage);
     } finally {
       setIsLoading(false);
@@ -113,4 +113,3 @@ export function Login({ onLoginSuccess }: LoginProps) {
     </div>
   );
 }
-

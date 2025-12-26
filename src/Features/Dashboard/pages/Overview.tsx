@@ -1,11 +1,30 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Document } from "@solar-icons/react";
-import { getApiKeyStatsEndpoint, listApiKeysEndpoint, type OverviewStatsResponseData, type ApiKeyStatsItem, type ApiKeyListItem } from "@/lib/api/endpoints";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { RefreshCircle } from "@solar-icons/react";
+import {
+  getApiKeyStatsEndpoint,
+  listApiKeysEndpoint,
+  type OverviewStatsResponseData,
+  type ApiKeyStatsItem,
+  type ApiKeyListItem,
+  ApiError,
+} from "@/lib/api/endpoints";
 import {
   LineChart,
   Line,
@@ -19,12 +38,9 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-interface OverviewProps {
-  onToggleSidebar?: () => void;
-}
-
-export function Overview({ onToggleSidebar }: OverviewProps) {
-  const [overviewData, setOverviewData] = useState<OverviewStatsResponseData | null>(null);
+export function Overview() {
+  const [overviewData, setOverviewData] =
+    useState<OverviewStatsResponseData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -33,21 +49,37 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
   const [isLoadingKeys, setIsLoadingKeys] = useState(true);
 
+  // Fetch API keys function
+  const fetchApiKeys = async () => {
+    setIsLoadingKeys(true);
+    try {
+      const response = await listApiKeysEndpoint();
+      if (
+        response.data &&
+        response.data.keys &&
+        response.data.keys.length > 0
+      ) {
+        setApiKeys(response.data.keys);
+      } else {
+        setApiKeys([]);
+      }
+    } catch (err) {
+      console.error("Error fetching API keys:", err);
+      // Don't show error for API keys fetch failure in Overview, just log it
+      // The error will be shown when user tries to filter by key
+      setApiKeys([]);
+    } finally {
+      setIsLoadingKeys(false);
+    }
+  };
+
+  // Refresh all dashboard data
+  const refreshDashboard = async () => {
+    await Promise.all([fetchApiKeys(), fetchStats()]);
+  };
+
   // Fetch API keys on mount
   useEffect(() => {
-    const fetchApiKeys = async () => {
-      setIsLoadingKeys(true);
-      try {
-        const response = await listApiKeysEndpoint();
-        if (response.data && response.data.keys && response.data.keys.length > 0) {
-          setApiKeys(response.data.keys);
-        }
-      } catch (err) {
-        console.error("Error fetching API keys:", err);
-      } finally {
-        setIsLoadingKeys(false);
-      }
-    };
     fetchApiKeys();
   }, []);
 
@@ -71,7 +103,7 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
 
       if (response.data) {
         // Handle both old format (single object) and new format (keys array)
-        if ('keys' in response.data) {
+        if ("keys" in response.data) {
           setOverviewData(response.data as OverviewStatsResponseData);
         } else {
           // When a single key is selected, wrap it in keys array for consistency
@@ -80,7 +112,23 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
         }
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to fetch stats";
+      let errorMessage = "Failed to fetch stats";
+      if (err instanceof ApiError) {
+        errorMessage = err.message;
+        // Handle specific error cases
+        if (err.status === 401) {
+          errorMessage = "Session expired. Please refresh the page.";
+        } else if (err.status === 0) {
+          errorMessage =
+            "Network error: Unable to connect to the server. Please check your internet connection.";
+        } else if (err.status === 404) {
+          errorMessage = "Stats not found. Please check your filters.";
+        } else if (err.status && err.status >= 500) {
+          errorMessage = "Server error. Please try again later.";
+        }
+      } else if (err instanceof Error) {
+        errorMessage = err.message;
+      }
       setError(errorMessage);
       console.error("Error fetching stats:", err);
     } finally {
@@ -97,7 +145,11 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
         averageCreditsPerRecord: 0,
         creditsByType: {} as { [key: string]: number },
         recordsByType: {} as { [key: string]: number },
-        chartData: [] as Array<{ date: string; credits: number; records: number }>,
+        chartData: [] as Array<{
+          date: string;
+          credits: number;
+          records: number;
+        }>,
       };
     }
 
@@ -105,7 +157,9 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
     let totalRecords = 0;
     const creditsByType: { [key: string]: number } = {};
     const recordsByType: { [key: string]: number } = {};
-    const chartDataMap: { [date: string]: { credits: number; records: number } } = {};
+    const chartDataMap: {
+      [date: string]: { credits: number; records: number };
+    } = {};
 
     // Aggregate data from all keys
     overviewData.keys.forEach((key: ApiKeyStatsItem) => {
@@ -137,7 +191,8 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
       .map(([date, data]) => ({ date, ...data }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    const averageCreditsPerRecord = totalRecords > 0 ? totalCredits / totalRecords : 0;
+    const averageCreditsPerRecord =
+      totalRecords > 0 ? totalCredits / totalRecords : 0;
 
     return {
       totalCredits,
@@ -153,7 +208,10 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
 
   // Prepare chart data for Recharts
   const rechartsData = aggregated.chartData.map((point) => ({
-    date: new Date(point.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    date: new Date(point.date).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    }),
     fullDate: point.date,
     records: point.records,
     credits: Number(point.credits.toFixed(2)),
@@ -162,7 +220,8 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
   // Calculate usage distribution
   const creditsByType = aggregated.creditsByType;
   const totalCredits = aggregated.totalCredits;
-  const getPercentage = (value: number) => totalCredits > 0 ? (value / totalCredits) * 100 : 0;
+  const getPercentage = (value: number) =>
+    totalCredits > 0 ? (value / totalCredits) * 100 : 0;
 
   // Prepare data for usage distribution chart
   const distributionData = Object.entries(creditsByType).map(([key, value]) => {
@@ -187,14 +246,21 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
     <div className="space-y-6">
       <div className="dashboard-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-[#e5e5e5] dark:border-[#1f1f1f]">
         <div>
-          <h1 className="text-3xl font-bold text-black dark:text-white mb-1">Overview</h1>
+          <h1 className="text-3xl font-bold text-black dark:text-white mb-1">
+            Overview
+          </h1>
           <p className="text-sm text-[#666666] dark:text-[#999999]">
             Monitor your API usage and performance metrics
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <Label htmlFor="date-from" className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">From:</Label>
+            <Label
+              htmlFor="date-from"
+              className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium"
+            >
+              From:
+            </Label>
             <Input
               id="date-from"
               type="date"
@@ -204,7 +270,12 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label htmlFor="date-to" className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">To:</Label>
+            <Label
+              htmlFor="date-to"
+              className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium"
+            >
+              To:
+            </Label>
             <Input
               id="date-to"
               type="date"
@@ -228,29 +299,55 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
             </Button>
           )}
           <div className="flex items-center gap-2">
-            <label className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">API Key:</label>
+            <label className="text-sm text-[#666666] dark:text-[#999999] whitespace-nowrap font-medium">
+              API Key:
+            </label>
             <Select
               value={selectedKeyId?.toString() || "all"}
-              onValueChange={(value) => setSelectedKeyId(value === "all" ? null : Number(value))}
+              onValueChange={(value) =>
+                setSelectedKeyId(value === "all" ? null : Number(value))
+              }
               disabled={isLoadingKeys || apiKeys.length === 0}
             >
               <SelectTrigger className="w-[200px] border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] text-black dark:text-white focus:border-[#00c950] focus:ring-[#00c950]/20">
-                <SelectValue placeholder={isLoadingKeys ? "Loading..." : "All API keys"} />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-white dark:bg-[#111111] border-[#e5e5e5] dark:border-[#1f1f1f]">
-                <SelectItem value="all" className="text-black dark:text-white">All API keys</SelectItem>
+                <SelectItem value="all" className="text-black dark:text-white">
+                  All API keys
+                </SelectItem>
                 {apiKeys.map((key) => (
-                  <SelectItem key={key.id} value={key.id.toString()} className="text-black dark:text-white">
+                  <SelectItem
+                    key={key.id}
+                    value={key.id.toString()}
+                    className="text-black dark:text-white"
+                  >
                     ........{key.masked_suffix}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refreshDashboard}
+              disabled={isLoadingKeys || isLoading}
+              className="border-[#e5e5e5] dark:border-[#1f1f1f] hover:bg-[#f5f5f5] dark:hover:bg-[#1a1a1a] text-black dark:text-white"
+              title="Refresh dashboard"
+            >
+              <RefreshCircle
+                size={18}
+                className={isLoadingKeys || isLoading ? "animate-spin" : ""}
+              />
+            </Button>
           </div>
         </div>
       </div>
       {error && (
-        <Card size="sm" className="animate-fade-in-up border-[#ef4444] bg-[#ef4444]/5 dark:bg-[#ef4444]/10">
+        <Card
+          size="sm"
+          className="animate-fade-in-up border-[#ef4444] bg-[#ef4444]/5 dark:bg-[#ef4444]/10"
+        >
           <CardContent className="pt-4">
             <div className="text-[#ef4444] text-xs font-medium">{error}</div>
           </CardContent>
@@ -258,178 +355,247 @@ export function Overview({ onToggleSidebar }: OverviewProps) {
       )}
 
       {isLoading ? (
-        <div className="text-center py-12 text-[#666666] dark:text-[#999999] animate-fade-in">Loading stats...</div>
+        <div className="text-center py-12 text-[#666666] dark:text-[#999999] animate-fade-in">
+          Loading stats...
+        </div>
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200">
+            <Card
+              size="sm"
+              className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200"
+            >
               <CardHeader className="pb-2">
-                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">Total API Requests</CardDescription>
+                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">
+                  Total API Requests
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-[#00c950]">{aggregated.totalRecords.toLocaleString()}</div>
-                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">All time API requests</p>
+                <div className="text-2xl font-bold text-[#00c950]">
+                  {aggregated.totalRecords.toLocaleString()}
+                </div>
+                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">
+                  All time API requests
+                </p>
               </CardContent>
             </Card>
-            <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200">
+            <Card
+              size="sm"
+              className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200"
+            >
               <CardHeader className="pb-2">
-                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">Total Credits Used</CardDescription>
+                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">
+                  Total Credits Used
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-[#00c950]">{aggregated.totalCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">Credits consumed</p>
+                <div className="text-2xl font-bold text-[#00c950]">
+                  {aggregated.totalCredits.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}
+                </div>
+                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">
+                  Credits consumed
+                </p>
               </CardContent>
             </Card>
-            <Card size="sm" className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200">
+            <Card
+              size="sm"
+              className="dashboard-card border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm hover:shadow-md transition-shadow duration-200"
+            >
               <CardHeader className="pb-2">
-                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">Average Credits/API Request</CardDescription>
+                <CardDescription className="text-xs font-medium text-[#666666] dark:text-[#999999] uppercase tracking-wide">
+                  Average Credits/API Request
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-[#00c950]">{aggregated.averageCreditsPerRecord.toFixed(2)}</div>
-                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">Per API request average</p>
+                <div className="text-2xl font-bold text-[#00c950]">
+                  {aggregated.averageCreditsPerRecord.toFixed(2)}
+                </div>
+                <p className="text-xs text-[#999999] dark:text-[#666666] mt-1">
+                  Per API request average
+                </p>
               </CardContent>
             </Card>
           </div>
-      
-      {/* Usage Graphs */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card size="sm" className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
-          <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
-            <CardTitle className="text-base font-semibold text-black dark:text-white">API Calls Trend</CardTitle>
-            <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">API Requests and credits over time</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {rechartsData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={rechartsData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" dark:stroke="#1f1f1f" />
-                  <XAxis
-                    dataKey="date"
-                    className="text-xs"
-                    tick={{ fill: "#666666" }}
-                    stroke="#e5e5e5"
-                  />
-                  <YAxis
-                    className="text-xs"
-                    tick={{ fill: "#666666" }}
-                    stroke="#e5e5e5"
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#ffffff",
-                      border: "1px solid #e5e5e5",
-                      borderRadius: "8px",
-                      color: "#000000",
-                    }}
-                  />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="records"
-                    stroke="#00c950"
-                    strokeWidth={3}
-                    dot={{ fill: "#00c950", r: 5 }}
-                    name="API Requests"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="credits"
-                    stroke="#3b82f6"
-                    strokeWidth={3}
-                    dot={{ fill: "#3b82f6", r: 5 }}
-                    name="Credits"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">No chart data available</div>
-            )}
-          </CardContent>
-        </Card>
 
-        <Card size="sm" className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
-          <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
-            <CardTitle className="text-base font-semibold text-black dark:text-white">Usage Distribution</CardTitle>
-            <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">By service type</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {distributionData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={distributionData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
-                  <XAxis
-                    dataKey="name"
-                    className="text-xs"
-                    tick={{ fill: "#666666" }}
-                    stroke="#e5e5e5"
-                  />
-                  <YAxis
-                    className="text-xs"
-                    tick={{ fill: "#666666" }}
-                    stroke="#e5e5e5"
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#ffffff",
-                      border: "1px solid #e5e5e5",
-                      borderRadius: "8px",
-                      color: "#000000",
-                    }}
-                    formatter={(value: number) => [
-                      `${value.toFixed(2)} credits (${distributionData.find((d) => d.credits === value)?.percentage.toFixed(1)}%)`,
-                      "Credits",
-                    ]}
-                  />
-                  <Bar dataKey="credits" fill="#00c950" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">No usage data available</div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          {/* Usage Graphs */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card
+              size="sm"
+              className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm"
+            >
+              <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
+                <CardTitle className="text-base font-semibold text-black dark:text-white">
+                  API Calls Trend
+                </CardTitle>
+                <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">
+                  API Requests and credits over time
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4">
+                {rechartsData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={rechartsData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
+                      <XAxis
+                        dataKey="date"
+                        className="text-xs"
+                        tick={{ fill: "#666666" }}
+                        stroke="#e5e5e5"
+                      />
+                      <YAxis
+                        className="text-xs"
+                        tick={{ fill: "#666666" }}
+                        stroke="#e5e5e5"
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#ffffff",
+                          border: "1px solid #e5e5e5",
+                          borderRadius: "8px",
+                          color: "#000000",
+                        }}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="records"
+                        stroke="#00c950"
+                        strokeWidth={3}
+                        dot={{ fill: "#00c950", r: 5 }}
+                        name="API Requests"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="credits"
+                        stroke="#3b82f6"
+                        strokeWidth={3}
+                        dot={{ fill: "#3b82f6", r: 5 }}
+                        name="Credits"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">
+                    No chart data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-      <Card size="sm" className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm">
-        <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
-          <CardTitle className="text-base font-semibold text-black dark:text-white">Daily API Usage</CardTitle>
-          <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">API Requests per day</CardDescription>
-        </CardHeader>
-        <CardContent className="pt-4">
-          {rechartsData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={rechartsData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
-                <XAxis
-                  dataKey="date"
-                  className="text-xs"
-                  tick={{ fill: "#666666" }}
-                  stroke="#e5e5e5"
-                />
-                <YAxis
-                  className="text-xs"
-                  tick={{ fill: "#666666" }}
-                  stroke="#e5e5e5"
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#ffffff",
-                    border: "1px solid #e5e5e5",
-                    borderRadius: "8px",
-                    color: "#000000",
-                  }}
-                />
-                <Bar dataKey="records" fill="#00c950" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">No chart data available</div>
-          )}
-        </CardContent>
-      </Card>
+            <Card
+              size="sm"
+              className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm"
+            >
+              <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
+                <CardTitle className="text-base font-semibold text-black dark:text-white">
+                  Usage Distribution
+                </CardTitle>
+                <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">
+                  By service type
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4">
+                {distributionData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={distributionData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
+                      <XAxis
+                        dataKey="name"
+                        className="text-xs"
+                        tick={{ fill: "#666666" }}
+                        stroke="#e5e5e5"
+                      />
+                      <YAxis
+                        className="text-xs"
+                        tick={{ fill: "#666666" }}
+                        stroke="#e5e5e5"
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#ffffff",
+                          border: "1px solid #e5e5e5",
+                          borderRadius: "8px",
+                          color: "#000000",
+                        }}
+                        formatter={(value: number | undefined) => [
+                          value
+                            ? `${value.toFixed(2)} credits (${distributionData
+                                .find((d) => d.credits === value)
+                                ?.percentage.toFixed(1)}%)`
+                            : "0",
+                          "Credits",
+                        ]}
+                      />
+                      <Bar
+                        dataKey="credits"
+                        fill="#00c950"
+                        radius={[6, 6, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">
+                    No usage data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card
+            size="sm"
+            className="dashboard-chart border border-[#e5e5e5] dark:border-[#1f1f1f] bg-white dark:bg-[#0a0a0a] shadow-sm"
+          >
+            <CardHeader className="border-b border-[#e5e5e5] dark:border-[#1f1f1f] pb-3">
+              <CardTitle className="text-base font-semibold text-black dark:text-white">
+                Daily API Usage
+              </CardTitle>
+              <CardDescription className="text-xs text-[#666666] dark:text-[#999999]">
+                API Requests per day
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {rechartsData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={rechartsData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
+                    <XAxis
+                      dataKey="date"
+                      className="text-xs"
+                      tick={{ fill: "#666666" }}
+                      stroke="#e5e5e5"
+                    />
+                    <YAxis
+                      className="text-xs"
+                      tick={{ fill: "#666666" }}
+                      stroke="#e5e5e5"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#ffffff",
+                        border: "1px solid #e5e5e5",
+                        borderRadius: "8px",
+                        color: "#000000",
+                      }}
+                    />
+                    <Bar
+                      dataKey="records"
+                      fill="#00c950"
+                      radius={[6, 6, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-sm text-[#666666] dark:text-[#999999] text-center py-12">
+                  No chart data available
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
     </div>
   );
 }
-
